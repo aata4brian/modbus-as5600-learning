@@ -1,262 +1,68 @@
-# Modbus RTU + AS5600 Embedded Learning
+# Modbus–AS5600 Robotics Lab
 
-Repository ini berisi pembelajaran dan eksperimen mengenai:
+**A source-backed experiment in encoder acquisition and a multi-node RS485 bus.**
 
-- Modbus RTU
-- RS485
-- Arduino Master-Slave
-- Python Modbus
-- AS5600 Magnetic Encoder
-- Embedded System Architecture
-- Timing dan Non-Blocking System
-- SoftwareSerial vs Hardware UART
+An Arduino master polls an AS5600 encoder node and a Python laptop node using Modbus RTU. The repository captures wiring, register responsibilities and the trade-offs of sharing serial resources on small microcontrollers.
 
-Repository ini dibuat sebagai knowledge base pembelajaran embedded system dan robotic communication system.
+**Status:** firmware examples and technical notes. Hardware performance measurements and a pinned Arduino build environment are pending. CAN, ESP32, RTOS and odometry integration are future work, not implemented capabilities of this repository.
 
----
+## System architecture
 
-# Project Architecture
+```mermaid
+flowchart TD
+  Encoder[AS5600 magnetic encoder] -->|I2C| Slave[Arduino slave 1]
+  Slave <-->|RS485 Modbus RTU| Master[Arduino master]
+  Master <-->|RS485 Modbus RTU| Adapter[USB RS485 adapter]
+  Adapter <--> Laptop[Python slave 2]
+  Master -->|Separate USB serial| Debug[Serial monitor]
+```
 
-AS5600
-   ↓ I2C
-Arduino Slave 1
-   ↓ RS485 Modbus RTU
-Arduino Master
-   ↕
-Laptop Slave 2 (Python Modbus)
+[Wiring and pins](hardware/pin_mapping.md) · [Full wiring notes](hardware/wiring_master_slave_laptop.md) · [Register and timing contract](docs/PROTOCOL.md) · [Measurement protocol](docs/MEASUREMENT_PROTOCOL.md)
 
----
+## What the source demonstrates
 
-# System Overview
+| Component | Responsibility | Entry point |
+| --- | --- | --- |
+| Encoder node, ID 1 | Read angle over I2C; expose angle, heartbeat and read status | `arduino/06_slave1_as5600_hardware_serial/` |
+| Arduino master | Alternate FC03 requests to slave 1 and slave 2 | `arduino/07_master_read_slave1_and_laptop/` |
+| Laptop node, ID 2 | Expose four changing values and a heartbeat | `python/02_laptop_modbus_slave/` |
+| Earlier examples | Register writes, direct sensor reads and configuration | `arduino/01_*` through `arduino/05_*` |
 
-## Arduino Master
+The latest example configures **9600 baud, 8N1**, encoder acquisition every **50 ms**, a master request cycle threshold of **500 ms**, and a **300 ms** master timeout. These are settings found in code, not measured latency, throughput or a tested-node limit.
 
-Tugas:
+## Run and inspect
 
-* membaca semua slave
-* menggabungkan data
-* menjadi pusat komunikasi
+For the laptop example, use Python 3.12 and the compatible legacy PyModbus API:
 
-Menggunakan:
+```bash
+python -m venv .venv
+# Use .venv\Scripts\python.exe on Windows.
+.venv/bin/python -m pip install -r python/requirements.txt
+.venv/bin/python python/02_laptop_modbus_slave/laptop_slave_array_sender.py --help
+.venv/bin/python python/02_laptop_modbus_slave/laptop_slave_array_sender.py --port COM23
+```
 
-* SoftwareSerial
-* MAX485
-* Modbus RTU Master
+On Linux select the actual serial device, for example `/dev/ttyUSB0`. Do not assume the example port exists. The script opens hardware only under its `main` entry point and keeps values within unsigned 16-bit registers.
 
----
+For firmware, open the relevant `.ino` in the Arduino IDE. The code targets the UNO/Nano-style pins in the wiring document and depends on `Wire`, `SoftwareSerial`, and a compatible `ModbusRtu.h` library. The precise third-party library revision and board core have not been recovered, so no compile-success badge is claimed.
 
-## Arduino Slave 1
+## Evidence and limitations
 
-Tugas:
+- Register layout and task timing are traceable to the checked-in source.
+- AS5600 status means the I2C transaction produced a reading; it does **not** prove valid magnet strength or placement.
+- A failed encoder read retains the previous angle. Consumers must check status and heartbeat before using it.
+- `COM_IDLE` alone does not establish a successful Modbus response; the master currently prints the buffer without explicit freshness/error gating.
+- The source has two slave IDs. Maximum reliable node count, latency percentiles, packet loss and sustained polling rate are **measurement pending**.
+- This is a communication experiment, not a motor safety controller. See the [CAN and robot integration plan](docs/ROBOT_INTEGRATION.md).
 
-* membaca encoder AS5600
-* menyimpan data ke holding register
-* mengirim data ke master
+## Verification
 
-Menggunakan:
+```bash
+python -m pip install -r python/requirements.txt
+python -m unittest discover -s tests -v
+python -m compileall -q python
+```
 
-* Hardware UART
-* MAX485
-* AS5600
-* Modbus RTU Slave
+These host checks validate register rollover, import behavior and syntax. They do not transmit on RS485 or substitute for firmware compilation and hardware tests. See [verification](docs/VERIFICATION.md).
 
----
-
-## Laptop Slave 2
-
-Tugas:
-
-* mengirim array data
-* simulasi target
-* simulasi command
-* simulasi trajectory
-
-Menggunakan:
-
-* Python
-* pymodbus
-* USB to RS485
-
----
-
-# Learning Roadmap
-
-## 1. Python to Arduino Modbus
-
-* Python sebagai Modbus master
-* Arduino sebagai slave
-* komunikasi RS485 dasar
-
----
-
-## 2. Arduino to Arduino Modbus
-
-* Arduino master
-* Arduino slave
-* read/write holding register
-
----
-
-## 3. AS5600 Basic
-
-* komunikasi I2C
-* membaca register
-* 12-bit encoder
-
----
-
-## 4. AS5600 + Modbus
-
-* slave membaca encoder
-* data dikirim lewat Modbus RTU
-
----
-
-## 5. Multi-Slave Modbus System
-
-* Slave 1 = AS5600 Node
-* Slave 2 = Laptop Node
-* Arduino sebagai master utama
-
----
-
-# Hardware Used
-
-* Arduino UNO / Nano
-* MAX485
-* USB to RS485
-* AS5600
-* Breadboard
-* Jumper wires
-
----
-
-# Communication Protocol
-
-## RS485
-
-RS485 menggunakan:
-
-* A
-* B
-
-dan optional:
-
-* GND common reference
-
-RS485 hanya menangani komunikasi data,
-bukan supply daya.
-
----
-
-## Modbus RTU
-
-Repository ini menggunakan:
-
-* Holding Register
-* Function Code 3
-* Function Code 6
-
----
-
-# SoftwareSerial vs Hardware UART
-
-## SoftwareSerial
-
-Kelebihan:
-
-* fleksibel
-* bisa memakai pin lain
-
-Kekurangan:
-
-* sensitif timing
-* CPU intensive
-* kurang stabil untuk real-time
-
----
-
-## Hardware UART
-
-Kelebihan:
-
-* stabil
-* hardware assisted
-* lebih cocok untuk Modbus RTU
-
-Digunakan pada:
-
-* slave encoder AS5600
-
----
-
-# Important Embedded System Concepts
-
-Repository ini fokus pada:
-
-* timing
-* blocking vs non-blocking
-* polling
-* communication latency
-* distributed system
-* resource sharing
-
----
-
-# Main Insight
-
-Masalah terbesar dalam embedded system biasanya bukan wiring,
-melainkan:
-
-* timing
-* blocking code
-* SoftwareSerial limitation
-* interrupt handling
-* communication latency
-
----
-
-# Repository Structure
-
-docs/
-hardware/
-arduino/
-python/
-references/
-images/
-
----
-
-# Current Progress
-
-* [x] Python ↔ Arduino Modbus
-* [x] Arduino ↔ Arduino Modbus
-* [x] AS5600 basic reader
-* [x] AS5600 + Modbus
-* [x] Multi-slave Modbus system
-
----
-
-# Future Goals
-
-* Multi-turn encoder
-* PID control
-* Odometry
-* Robot kinematics
-* CAN Bus
-* ESP32 migration
-* RTOS
-* DMA UART
-* Motion control system
-
----
-
-# Repository Purpose
-
-Repository ini dibuat untuk:
-
-* dokumentasi pembelajaran
-* eksperimen embedded system
-* referensi robotik
-* latihan arsitektur komunikasi industri
-* knowledge base pribadi
+The existing Indonesian notes in `docs/01_*` through `docs/09_*` remain available as the detailed learning record. MIT license retained unchanged. Photos and bench traces are listed in [asset requests](ASSET_REQUESTS.md).
